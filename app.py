@@ -1,21 +1,24 @@
 """
-app.py  — Resit Analisa (Streamlit + Gemini)  [Fail Induk + Anti-Pendua Pintar]
--------------------------------------------------------------------------------
-Keupayaan:
-  1. Upload BANYAK resit serentak
-  2. AI (Gemini) ekstrak data + NOMBOR RESIT
-  3. Anti-pendua 2 lapisan:
-       - Lapisan 1: nombor resit unik -> pembeza utama
-       - Lapisan 2: jika tiada nombor resit & nampak serupa -> minta
-                    pengesahan manusia (checkbox), bukan buang terus
-  4. Fail induk + ringkasan bulanan
+app.py  — Resit Analisa (Streamlit + Gemini + Google Drive OAuth)
+-----------------------------------------------------------------
+Aliran kerja automatik:
+  - Log masuk Google sekali (OAuth)
+  - App BACA fail induk terus dari Drive anda
+  - Upload resit baru -> AI ekstrak -> anti-pendua
+  - App TULIS fail induk terus ke Drive (tiada download/upload manual)
+
+Skop Drive: drive.file -> app HANYA nampak fail yang ia sendiri cipta.
+            (Tidak boleh intai fail lain dalam Drive anda.)
 
 Jalankan:
     pip install -r requirements.txt
     streamlit run app.py
 
-Secrets:
-    GEMINI_API_KEY = "AIza..."
+Secrets (Streamlit Cloud: Settings > Secrets):
+    GEMINI_API_KEY      = "AIza..."
+    GOOGLE_CLIENT_ID    = "xxxx.apps.googleusercontent.com"
+    GOOGLE_CLIENT_SECRET= "GOCSPX-xxxx"
+    REDIRECT_URI        = "https://resitanalisa.streamlit.app"   # URL app anda
 
 Dibangunkan oleh: Sulaiman Osman  (sulaimanosman03@gmail.com)
 """
@@ -29,6 +32,9 @@ from PIL import Image
 from google import genai
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, Alignment
+from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 MODEL_NAME = "gemini-2.5-flash"
 MONEY_FORMAT = "#,##0.00"
@@ -37,16 +43,13 @@ BOLD = Font(bold=True)
 AUTHOR_NAME = "Sulaiman Osman"
 AUTHOR_EMAIL = "sulaimanosman03@gmail.com"
 
-# receipt_no ditambah sebagai pembeza utama
+MASTER_FILENAME = "fail_induk_perakaunan.xlsx"
+XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
 FIELDS = [
-    "transaction_date",
-    "vendor_name",
-    "receipt_no",
-    "description",
-    "amount",
-    "debit_account",
-    "credit_account",
-    "currency",
+    "transaction_date", "vendor_name", "receipt_no", "description",
+    "amount", "debit_account", "credit_account", "currency",
 ]
 
 
@@ -82,52 +85,40 @@ def add_footer(ws):
 
 
 # ==================================================
-# LOGIK ANTI-PENDUA
+# ANTI-PENDUA
 # ==================================================
 def _vendor(t):
     return str(t.get("vendor_name", "")).strip().lower()
 
 
 def classify(txn, existing):
-    """
-    Pulang salah satu:
-      'new'   -> transaksi baru, boleh terus tambah
-      'exact' -> pendua tepat (nombor resit sama) -> langkau
-      'maybe' -> serupa tapi tiada nombor resit -> perlu disahkan manusia
-    """
+    """new = tambah · exact = pendua tepat (langkau) · maybe = sahkan manusia."""
     receipt_no = str(txn.get("receipt_no", "")).strip()
-
-    # Lapisan 1: ada nombor resit -> pembeza muktamad
-    if receipt_no:
+    if receipt_no:  # Lapisan 1: nombor resit
         for e in existing:
             if _vendor(e) == _vendor(txn) and str(e.get("receipt_no", "")).strip() == receipt_no:
                 return "exact"
         return "new"
-
-    # Lapisan 2: tiada nombor resit -> bandingkan tarikh+vendor+jumlah
+    # Lapisan 2: tiada nombor resit
     amt = round(float(txn.get("amount", 0) or 0), 2)
     date = str(txn.get("transaction_date", "")).strip()
     for e in existing:
-        same = (
-            str(e.get("transaction_date", "")).strip() == date
-            and _vendor(e) == _vendor(txn)
-            and round(float(e.get("amount", 0) or 0), 2) == amt
-        )
-        if same:
+        if (str(e.get("transaction_date", "")).strip() == date
+                and _vendor(e) == _vendor(txn)
+                and round(float(e.get("amount", 0) or 0), 2) == amt):
             return "maybe"
     return "new"
 
 
 # ==================================================
-# AI: ekstrak data satu resit (termasuk nombor resit)
+# AI
 # ==================================================
 def extract_receipt_data(image):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     prompt = """
     Baca resit ini dan pulangkan HANYA objek JSON (tiada teks lain, tiada markdown).
-    Cari nombor resit / invois / bil (jika ada) untuk 'receipt_no'.
-    Jika tiada nombor resit dijumpai, letak "" (kosong).
-    Guna format ini tepat-tepat:
+    Cari nombor resit / invois / bil untuk 'receipt_no'. Jika tiada, letak "".
+    Format:
     {
       "transaction_date": "YYYY-MM-DD",
       "vendor_name": "...",
@@ -148,47 +139,36 @@ def extract_receipt_data(image):
 
 
 # ==================================================
-# BACA fail induk lama
+# EXCEL: baca & bina
 # ==================================================
-def read_master(uploaded_xlsx):
-    wb = load_workbook(uploaded_xlsx)
+def read_master_bytes(buf):
+    wb = load_workbook(buf)
     if "Transactions" not in wb.sheetnames:
         return []
     ws = wb["Transactions"]
-    transactions = []
+    out = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not any(row):
             continue
-        txn = {FIELDS[i]: (row[i] if i < len(row) else "") for i in range(len(FIELDS))}
-        transactions.append(txn)
-    return transactions
+        out.append({FIELDS[i]: (row[i] if i < len(row) else "") for i in range(len(FIELDS))})
+    return out
 
 
-# ==================================================
-# BINA fail induk
-# ==================================================
 def build_master_excel(transactions):
     wb = Workbook()
-
-    # SHEET 1 : TRANSACTIONS
     ws1 = wb.active
     ws1.title = "Transactions"
     write_headers(ws1, ["Date", "Vendor", "Receipt No", "Description", "Amount",
                         "Debit Account", "Credit Account", "Currency"])
     for t in transactions:
         ws1.append([
-            t.get("transaction_date", ""),
-            t.get("vendor_name", ""),
-            t.get("receipt_no", ""),
-            t.get("description", ""),
-            float(t.get("amount", 0) or 0),
-            t.get("debit_account", ""),
-            t.get("credit_account", ""),
-            t.get("currency", "MYR"),
+            t.get("transaction_date", ""), t.get("vendor_name", ""),
+            t.get("receipt_no", ""), t.get("description", ""),
+            float(t.get("amount", 0) or 0), t.get("debit_account", ""),
+            t.get("credit_account", ""), t.get("currency", "MYR"),
         ])
-    apply_money_format(ws1, ["E"])  # Amount = kolum E
+    apply_money_format(ws1, ["E"])
 
-    # SHEET 2 : JOURNAL ENTRY
     ws2 = wb.create_sheet("Journal Entry")
     write_headers(ws2, ["Date", "Description", "Account", "Debit", "Credit"])
     for t in transactions:
@@ -199,26 +179,22 @@ def build_master_excel(transactions):
                     t.get("credit_account", ""), None, amt])
     apply_money_format(ws2, ["D", "E"])
 
-    # Ringkasan pandas
     df = pd.DataFrame(transactions)
     if not df.empty:
         df["amount"] = pd.to_numeric(df["amount"], errors="coerce").fillna(0)
         df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
         df["month"] = df["transaction_date"].dt.strftime("%Y-%m")
 
-    # SHEET 3 : MONTHLY SUMMARY
     ws3 = wb.create_sheet("Monthly Summary")
     write_headers(ws3, ["Month", "Total Expense (RM)", "Bil. Transaksi"])
     if not df.empty:
-        monthly = df.groupby("month").agg(
-            total=("amount", "sum"), count=("amount", "count")
-        ).reset_index()
+        monthly = df.groupby("month").agg(total=("amount", "sum"),
+                                          count=("amount", "count")).reset_index()
         for _, r in monthly.iterrows():
             ws3.append([r["month"], float(r["total"]), int(r["count"])])
     apply_money_format(ws3, ["B"])
     add_footer(ws3)
 
-    # SHEET 4 : BY ACCOUNT
     ws4 = wb.create_sheet("By Account")
     write_headers(ws4, ["Debit Account", "Total (RM)"])
     if not df.empty:
@@ -235,33 +211,111 @@ def build_master_excel(transactions):
 
 
 # ==================================================
+# GOOGLE DRIVE (OAuth)
+# ==================================================
+def get_flow():
+    return Flow.from_client_config(
+        {
+            "web": {
+                "client_id": st.secrets["GOOGLE_CLIENT_ID"],
+                "client_secret": st.secrets["GOOGLE_CLIENT_SECRET"],
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": [st.secrets["REDIRECT_URI"]],
+            }
+        },
+        scopes=SCOPES,
+        redirect_uri=st.secrets["REDIRECT_URI"],
+    )
+
+
+def drive_service(creds):
+    return build("drive", "v3", credentials=creds)
+
+
+def find_master(service):
+    """Cari fail induk yang app pernah cipta (skop drive.file)."""
+    q = f"name='{MASTER_FILENAME}' and trashed=false"
+    res = service.files().list(q=q, spaces="drive", fields="files(id,name)").execute()
+    files = res.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def download_master(service, file_id):
+    req = service.files().get_media(fileId=file_id)
+    buf = BytesIO()
+    downloader = MediaIoBaseDownload(buf, req)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+    buf.seek(0)
+    return buf
+
+
+def save_master(service, excel_bytes, file_id=None):
+    media = MediaIoBaseUpload(excel_bytes, mimetype=XLSX_MIME, resumable=True)
+    if file_id:
+        service.files().update(fileId=file_id, media_body=media).execute()
+        return file_id
+    meta = {"name": MASTER_FILENAME, "mimeType": XLSX_MIME}
+    created = service.files().create(body=meta, media_body=media, fields="id").execute()
+    return created["id"]
+
+
+# ==================================================
 # ANTARA MUKA STREAMLIT
 # ==================================================
 st.set_page_config(page_title="Resit Analisa", page_icon="🧾")
-st.title("🧾 Resit Analisa → Fail Induk Perakaunan")
+st.title("🧾 Resit Analisa → Fail Induk (Google Drive)")
 
-if "transactions" not in st.session_state:
-    st.session_state.transactions = []
-if "pending" not in st.session_state:
-    st.session_state.pending = []  # senarai {"data":..., "name":...} untuk disahkan
+for key, default in [("transactions", []), ("pending", []), ("master_file_id", None)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
-# Langkah 1
-st.subheader("1️⃣ Sambung dari fail induk lama (pilihan)")
-master_up = st.file_uploader("Upload fail induk Excel lama", type=["xlsx"], key="master")
-if master_up and st.button("📂 Muatkan fail induk"):
-    st.session_state.transactions = read_master(master_up)
-    st.success(f"{len(st.session_state.transactions)} transaksi dimuatkan.")
+# ---- Tangani redirect balik dari Google ----
+params = st.query_params
+if "code" in params and "credentials" not in st.session_state:
+    try:
+        flow = get_flow()
+        flow.fetch_token(code=params["code"])
+        st.session_state.credentials = flow.credentials
+        st.query_params.clear()
+        st.rerun()
+    except Exception as e:
+        st.error(f"Gagal log masuk: {e}")
 
-# Langkah 2
+creds = st.session_state.get("credentials")
+
+# ---- Seksyen 1: sambung Google Drive ----
+st.subheader("1️⃣ Google Drive")
+if not creds:
+    flow = get_flow()
+    auth_url, _ = flow.authorization_url(
+        prompt="consent", access_type="offline", include_granted_scopes="true"
+    )
+    st.link_button("🔐 Log masuk Google Drive", auth_url)
+    st.info("Log masuk sekali untuk baca/simpan fail induk terus dari Drive anda.")
+else:
+    st.success("✅ Tersambung ke Google Drive")
+    service = drive_service(creds)
+    if st.button("📂 Muat fail induk dari Drive"):
+        fid = find_master(service)
+        if fid:
+            st.session_state.master_file_id = fid
+            st.session_state.transactions = read_master_bytes(download_master(service, fid))
+            st.success(f"{len(st.session_state.transactions)} transaksi dimuatkan dari Drive.")
+        else:
+            st.session_state.master_file_id = None
+            st.info("Tiada fail induk lagi — akan dicipta automatik bila anda simpan.")
+
+# ---- Seksyen 2: upload resit ----
 st.subheader("2️⃣ Upload resit baru (boleh banyak sekali gus)")
-receipts = st.file_uploader(
-    "Pilih gambar resit", type=["jpg", "jpeg", "png"], accept_multiple_files=True
-)
+receipts = st.file_uploader("Pilih gambar resit", type=["jpg", "jpeg", "png"],
+                            accept_multiple_files=True)
 
 if receipts and st.button("🔍 Analisa Semua Resit"):
     progress = st.progress(0)
-    added, exact = 0, 0
-    pending = []
+    added, exact, pending = 0, 0, []
     for i, file in enumerate(receipts):
         try:
             data = extract_receipt_data(Image.open(file))
@@ -273,7 +327,7 @@ if receipts and st.button("🔍 Analisa Semua Resit"):
             elif status == "exact":
                 exact += 1
                 st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
-            else:  # maybe
+            else:
                 pending.append({"data": data, "name": file.name})
         except Exception as e:
             st.error(f"❌ {file.name}: {e}")
@@ -281,10 +335,10 @@ if receipts and st.button("🔍 Analisa Semua Resit"):
     st.session_state.pending = pending
     st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
 
-# Bahagian semakan manusia (Lapisan 2)
+# ---- Semakan manusia ----
 if st.session_state.pending:
     st.subheader("🔎 Perlu disahkan — serupa, tiada nombor resit")
-    st.write("Tanda yang **BUKAN pendua** (memang pembelian berasingan):")
+    st.write("Tanda yang **BUKAN pendua**:")
     for idx, item in enumerate(st.session_state.pending):
         d = item["data"]
         st.checkbox(
@@ -301,24 +355,24 @@ if st.session_state.pending:
         st.success(f"{kept} transaksi ditambah sebagai pembelian berasingan.")
         st.rerun()
 
-# Langkah 3
+# ---- Seksyen 3: papar + simpan ----
 st.subheader("3️⃣ Fail induk semasa")
 if st.session_state.transactions:
     st.dataframe(pd.DataFrame(st.session_state.transactions))
-
     excel_file = build_master_excel(st.session_state.transactions)
-    st.download_button(
-        label="📥 Muat Turun Fail Induk (Excel)",
-        data=excel_file,
-        file_name="fail_induk_perakaunan.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
 
-    if st.button("🗑️ Kosongkan senarai"):
-        st.session_state.transactions = []
-        st.rerun()
+    col1, col2 = st.columns(2)
+    with col1:
+        if creds and st.button("☁️ Simpan ke Google Drive"):
+            fid = save_master(drive_service(creds), excel_file,
+                              st.session_state.get("master_file_id"))
+            st.session_state.master_file_id = fid
+            st.success("Disimpan ke Google Drive ✅")
+    with col2:
+        st.download_button("📥 Muat turun (sandaran)", data=excel_file,
+                           file_name=MASTER_FILENAME, mime=XLSX_MIME)
 else:
-    st.info("Belum ada transaksi. Muatkan fail induk lama atau upload resit.")
+    st.info("Belum ada transaksi. Muat fail induk dari Drive atau upload resit.")
 
 # FOOTNOTE
 st.markdown("---")
