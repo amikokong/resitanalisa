@@ -24,6 +24,7 @@ Dibangunkan oleh: Sulaiman Osman  (sulaimanosman03@gmail.com)
 """
 
 import json
+import time
 from io import BytesIO
 
 import streamlit as st
@@ -113,7 +114,7 @@ def classify(txn, existing):
 # ==================================================
 # AI
 # ==================================================
-def extract_receipt_data(image):
+def extract_receipt_data(image, max_retries=4):
     client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
     prompt = """
     Baca resit ini dan pulangkan HANYA objek JSON (tiada teks lain, tiada markdown).
@@ -130,12 +131,25 @@ def extract_receipt_data(image):
       "currency": "MYR"
     }
     """
-    response = client.models.generate_content(
-        model=MODEL_NAME,
-        contents=[prompt, image],
-        config={"response_mime_type": "application/json"},
-    )
-    return json.loads(response.text)
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            response = client.models.generate_content(
+                model=MODEL_NAME,
+                contents=[prompt, image],
+                config={"response_mime_type": "application/json"},
+            )
+            return json.loads(response.text)
+        except Exception as e:
+            last_err = e
+            msg = str(e).lower()
+            # Cuba semula HANYA untuk ralat sementara (server sibuk)
+            if any(k in msg for k in ["503", "unavailable", "overload", "429", "rate"]):
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # tunggu 1, 2, 4 saat (backoff)
+                    continue
+            raise  # ralat lain (cth JSON rosak) -> terus naikkan
+    raise last_err
 
 
 # ==================================================
