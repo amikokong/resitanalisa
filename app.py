@@ -493,6 +493,53 @@ with st.container(border=True):
         st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
 
 # ==================================================
+# SEKSYEN 3: TAMBAH TRANSAKSI MANUAL (TANPA RESIT)
+# ==================================================
+with st.container(border=True):
+    section("3", "Tambah Transaksi Manual (Tanpa Resit)")
+    st.caption("Untuk transaksi tanpa dokumen — contoh tol, parking, tip. Isi maklumat dan tambah.")
+
+    # Kategori akaun debit yang seragam (chart of accounts ringkas)
+    KATEGORI = [
+        "Toll & Parking", "Travel Expense", "Fuel", "Office Supplies",
+        "Utilities", "Meals & Entertainment", "Miscellaneous Expense", "Lain-lain",
+    ]
+
+    with st.form("manual_form", clear_on_submit=True):
+        c1, c2 = st.columns(2)
+        with c1:
+            m_date = st.date_input("Tarikh")
+            m_vendor = st.text_input("Vendor / Tempat", placeholder="cth: Tol PLUS, Parking DBKL")
+            m_amount = st.number_input("Jumlah (RM)", min_value=0.0, step=0.50, format="%.2f")
+        with c2:
+            m_debit = st.selectbox("Akaun Debit (kategori)", KATEGORI)
+            m_debit_lain = st.text_input("Jika 'Lain-lain', nyatakan kategori", placeholder="cth: Donation Expense")
+            m_credit = st.text_input("Akaun Kredit", value="Cash")
+        m_desc = st.text_input("Keterangan", placeholder="cth: Tol perjalanan ke pejabat klien")
+        submitted = st.form_submit_button("➕ Tambah Transaksi")
+
+    if submitted:
+        if m_amount <= 0:
+            st.error("Sila masukkan jumlah lebih daripada 0.")
+        elif not m_vendor.strip():
+            st.error("Sila isi Vendor / Tempat.")
+        else:
+            debit = m_debit_lain.strip() if (m_debit == "Lain-lain" and m_debit_lain.strip()) else m_debit
+            txn = {
+                "transaction_date": str(m_date),
+                "vendor_name": m_vendor.strip(),
+                "receipt_no": "",  # tiada resit (transaksi manual)
+                "description": m_desc.strip() or m_vendor.strip(),
+                "amount": float(m_amount),
+                "debit_account": debit,
+                "credit_account": m_credit.strip() or "Cash",
+                "currency": "MYR",
+            }
+            st.session_state.transactions.append(txn)
+            st.success(f"Ditambah: {txn['vendor_name']} — RM{txn['amount']:.2f} ({debit})")
+            st.rerun()
+
+# ==================================================
 # SEMAKAN MANUSIA
 # ==================================================
 if st.session_state.pending:
@@ -516,10 +563,10 @@ if st.session_state.pending:
             st.rerun()
 
 # ==================================================
-# SEKSYEN 3: FAIL INDUK & LAPORAN
+# SEKSYEN 4: FAIL INDUK & LAPORAN
 # ==================================================
 with st.container(border=True):
-    section("3", "Fail Induk & Laporan")
+    section("4", "Fail Induk & Laporan")
     if st.session_state.transactions:
         st.dataframe(pd.DataFrame(st.session_state.transactions), use_container_width=True)
         excel_file = build_master_excel(st.session_state.transactions)
