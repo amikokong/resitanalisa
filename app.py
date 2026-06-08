@@ -226,6 +226,7 @@ def get_flow():
         },
         scopes=SCOPES,
         redirect_uri=st.secrets["REDIRECT_URI"],
+        autogenerate_code_verifier=False,  # matikan PKCE (elak ralat "Missing code verifier")
     )
 
 
