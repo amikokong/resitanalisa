@@ -1,90 +1,170 @@
-import pandas as pd
+def create_accounting_excel(data):
+
+```
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from io import BytesIO
 
-default_prompt = """
-You are a professional accounting assistant.
+wb = Workbook()
 
-Analyze the uploaded receipt, invoice or financial document.
+date = data.get("transaction_date")
+desc = data.get("description")
+amount = float(data.get("amount", 0))
 
-Extract and classify accounting entries.
+debit_acc = data.get("debit_account")
+credit_acc = data.get("credit_account")
 
-Return ONLY valid JSON.
+# ==================================================
+# SHEET 1 : JOURNAL ENTRY
+# ==================================================
 
-Format:
+ws1 = wb.active
+ws1.title = "Journal Entry"
 
-{
-  "transaction_date": "YYYY-MM-DD",
-  "vendor_name": "",
-  "description": "",
-  "amount": 0,
-  "debit_account": "",
-  "credit_account": "",
-  "currency": "MYR"
-}
+headers = [
+    "Date",
+    "Description",
+    "Account",
+    "Debit",
+    "Credit"
+]
 
-Accounting Rules:
+for col, header in enumerate(headers, 1):
+    cell = ws1.cell(row=1, column=col)
+    cell.value = header
+    cell.font = Font(bold=True)
 
-Office supplies → Debit Office Supplies Expense
-Equipment → Debit Equipment Asset
-Fuel → Debit Vehicle Expense
-Internet → Debit Internet Expense
-Utility → Debit Utility Expense
-Payment by cash → Credit Cash
-Payment by bank → Credit Bank Account
+ws1.append([
+    date,
+    desc,
+    debit_acc,
+    amount,
+    ""
+])
 
-Never guess amount.
-def create_accounting_excel(data):
+ws1.append([
+    date,
+    desc,
+    credit_acc,
+    "",
+    amount
+])
 
-    wb = Workbook()
-    ws = wb.active
+# ==================================================
+# SHEET 2 : GENERAL LEDGER
+# ==================================================
 
-    ws.title = "General Ledger"
+ws2 = wb.create_sheet("General Ledger")
 
-    headers = [
-        "Date",
-        "Description",
-        "Account",
-        "Debit (RM)",
-        "Credit (RM)"
-    ]
+ledger_headers = [
+    "Account",
+    "Date",
+    "Description",
+    "Debit",
+    "Credit",
+    "Balance"
+]
 
-    for col_num, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_num)
-        cell.value = header
-        cell.font = Font(bold=True)
+for col, header in enumerate(ledger_headers, 1):
+    cell = ws2.cell(row=1, column=col)
+    cell.value = header
+    cell.font = Font(bold=True)
 
-    ws.append([
-        data.get("transaction_date"),
-        data.get("description"),
-        data.get("debit_account"),
-        data.get("amount"),
-        ""
-    ])
+ws2.append([
+    debit_acc,
+    date,
+    desc,
+    amount,
+    "",
+    amount
+])
 
-    ws.append([
-        data.get("transaction_date"),
-        data.get("description"),
-        data.get("credit_account"),
-        "",
-        data.get("amount")
-    ])
+ws2.append([
+    credit_acc,
+    date,
+    desc,
+    "",
+    amount,
+    -amount
+])
 
-    ws.append(["","","","", ""])
+# ==================================================
+# SHEET 3 : TRIAL BALANCE
+# ==================================================
 
-    ws.append([
-        "",
-        "",
-        "TOTAL",
-        f"=SUM(D2:D3)",
-        f"=SUM(E2:E3)"
-    ])
+ws3 = wb.create_sheet("Trial Balance")
 
-    excel_file = BytesIO()
-    wb.save(excel_file)
-    excel_file.seek(0)
+tb_headers = [
+    "Account",
+    "Debit",
+    "Credit"
+]
 
-    return excel_file
-Return null if unknown.
-"""
+for col, header in enumerate(tb_headers, 1):
+    cell = ws3.cell(row=1, column=col)
+    cell.value = header
+    cell.font = Font(bold=True)
+
+ws3.append([
+    debit_acc,
+    amount,
+    ""
+])
+
+ws3.append([
+    credit_acc,
+    "",
+    amount
+])
+
+ws3.append([
+    "TOTAL",
+    "=SUM(B2:B3)",
+    "=SUM(C2:C3)"
+])
+
+# ==================================================
+# SHEET 4 : PROFIT & LOSS
+# ==================================================
+
+ws4 = wb.create_sheet("Profit & Loss")
+
+pnl_headers = [
+    "Category",
+    "Amount (RM)"
+]
+
+for col, header in enumerate(pnl_headers, 1):
+    cell = ws4.cell(row=1, column=col)
+    cell.value = header
+    cell.font = Font(bold=True)
+
+ws4.append([
+    "Expense",
+    amount
+])
+
+ws4.append([
+    "Revenue",
+    0
+])
+
+ws4.append([
+    "Net Profit",
+    "=B3-B2"
+])
+
+# ==================================================
+# FORMAT COLUMN WIDTH
+# ==================================================
+
+for ws in wb.worksheets:
+    for column in ws.columns:
+        ws.column_dimensions[column[0].column_letter].width = 25
+
+excel_file = BytesIO()
+wb.save(excel_file)
+excel_file.seek(0)
+
+return excel_file
+```
