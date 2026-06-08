@@ -43,10 +43,15 @@ BOLD = Font(bold=True)
 
 AUTHOR_NAME = "Sulaiman Osman"
 AUTHOR_EMAIL = "sulaimanosman03@gmail.com"
+AUTHOR_YEAR = "2026"
 
-MASTER_FILENAME = "fail_induk_perakaunan.xlsx"
+MASTER_PREFIX = "fail_induk_perakaunan"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+
+# Nama bulan Bahasa Melayu (untuk folder bulanan)
+BULAN_MY = ["Januari", "Februari", "Mac", "April", "Mei", "Jun",
+            "Julai", "Ogos", "September", "Oktober", "November", "Disember"]
 
 FIELDS = [
     "transaction_date", "vendor_name", "receipt_no", "description",
@@ -79,7 +84,7 @@ def autofit(wb, width=22):
 
 def add_footer(ws):
     last = ws.max_row + 2
-    ws.cell(row=last, column=1, value=f"Dibangunkan oleh: {AUTHOR_NAME}")
+    ws.cell(row=last, column=1, value=f"\u00A9 {AUTHOR_YEAR} Dibangunkan oleh: {AUTHOR_NAME}")
     link = ws.cell(row=last + 1, column=1, value=AUTHOR_EMAIL)
     link.hyperlink = f"mailto:{AUTHOR_EMAIL}"
     link.font = Font(color="0563C1", underline="single")
@@ -248,12 +253,15 @@ def drive_service(creds):
     return build("drive", "v3", credentials=creds)
 
 
-def find_master(service):
-    """Cari fail induk yang app pernah cipta (skop drive.file)."""
-    q = f"name='{MASTER_FILENAME}' and trashed=false"
-    res = service.files().list(q=q, spaces="drive", fields="files(id,name)").execute()
+def find_latest_master(service):
+    """Cari fail induk TERKINI yang app pernah cipta (untuk sambung kerja)."""
+    q = "name contains 'fail_induk_perakaunan' and trashed=false"
+    res = service.files().list(
+        q=q, spaces="drive", orderBy="createdTime desc",
+        fields="files(id,name)",
+    ).execute()
     files = res.get("files", [])
-    return files[0]["id"] if files else None
+    return files[0] if files else None
 
 
 def download_master(service, file_id):
@@ -267,14 +275,41 @@ def download_master(service, file_id):
     return buf
 
 
-def save_master(service, excel_bytes, file_id=None):
-    media = MediaIoBaseUpload(excel_bytes, mimetype=XLSX_MIME, resumable=True)
-    if file_id:
-        service.files().update(fileId=file_id, media_body=media).execute()
-        return file_id
-    meta = {"name": MASTER_FILENAME, "mimeType": XLSX_MIME}
-    created = service.files().create(body=meta, media_body=media, fields="id").execute()
-    return created["id"]
+def monthly_folder_name():
+    """Nama folder bulanan, cth: 'Resit bagi bulan Jun 2026'."""
+    now = pd.Timestamp.now()
+    return f"Resit bagi bulan {BULAN_MY[now.month - 1]} {now.year}"
+
+
+def get_or_create_folder(service, name):
+    """Cari folder ikut nama; cipta jika belum wujud. Pulang ID folder."""
+    q = (f"name='{name}' and mimeType='application/vnd.google-apps.folder' "
+         f"and trashed=false")
+    res = service.files().list(q=q, spaces="drive", fields="files(id,name)").execute()
+    files = res.get("files", [])
+    if files:
+        return files[0]["id"]
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+
+def next_filename(service, folder_id):
+    """Jana nama fail bertarikh + nombor, cth: fail_induk_perakaunan_08062026(01).xlsx"""
+    datestr = pd.Timestamp.now().strftime("%d%m%Y")
+    base = f"fail_induk_perakaunan_{datestr}"
+    q = f"name contains '{base}' and '{folder_id}' in parents and trashed=false"
+    res = service.files().list(q=q, spaces="drive", fields="files(id,name)").execute()
+    count = len(res.get("files", []))
+    return f"{base}({count + 1:02d}).xlsx"
+
+
+def save_master_in_folder(service, excel_bytes, folder_id, filename):
+    """Cipta fail Excel BARU dalam folder bulanan (setiap simpan = snapshot)."""
+    media = MediaIoBaseUpload(BytesIO(excel_bytes), mimetype=XLSX_MIME, resumable=True)
+    meta = {"name": filename, "mimeType": XLSX_MIME, "parents": [folder_id]}
+    created = service.files().create(body=meta, media_body=media, fields="id,name").execute()
+    return created
 
 
 # ==================================================
@@ -374,7 +409,7 @@ def hero():
 
 def footer():
     st.markdown(
-        f'<div class="foot">Dibangunkan oleh <b>{AUTHOR_NAME}</b> · '
+        f'<div class="foot">\u00A9 {AUTHOR_YEAR} Dibangunkan oleh <b>{AUTHOR_NAME}</b> · '
         f'<a href="mailto:{AUTHOR_EMAIL}">{AUTHOR_EMAIL}</a></div>',
         unsafe_allow_html=True,
     )
@@ -383,7 +418,7 @@ def footer():
 # ==================================================
 # STATE + OAUTH REDIRECT
 # ==================================================
-for key, default in [("transactions", []), ("pending", []), ("master_file_id", None)]:
+for key, default in [("transactions", []), ("pending", [])]:
     if key not in st.session_state:
         st.session_state[key] = default
 
@@ -450,16 +485,17 @@ st.write("")
 # ==================================================
 with st.container(border=True):
     section("1", "Sambung Fail Induk")
-    st.caption("Muat rekod sedia ada dari Google Drive (pilihan — langkau jika kali pertama).")
-    if st.button("📂 Muat fail induk dari Drive"):
-        fid = find_master(service)
-        if fid:
-            st.session_state.master_file_id = fid
-            st.session_state.transactions = read_master_bytes(download_master(service, fid))
-            st.success(f"{len(st.session_state.transactions)} transaksi dimuatkan.")
+    st.caption("Muat fail induk TERKINI dari Google Drive (pilihan — langkau jika kali pertama).")
+    if st.button("📂 Muat fail induk terkini dari Drive"):
+        latest = find_latest_master(service)
+        if latest:
+            st.session_state.transactions = read_master_bytes(
+                download_master(service, latest["id"]))
+            st.success(
+                f"{len(st.session_state.transactions)} transaksi dimuatkan dari: "
+                f"{latest['name']}")
             st.rerun()
         else:
-            st.session_state.master_file_id = None
             st.info("Tiada fail induk lagi — akan dicipta automatik bila anda simpan.")
 
 # ==================================================
@@ -569,17 +605,21 @@ with st.container(border=True):
     section("4", "Fail Induk & Laporan")
     if st.session_state.transactions:
         st.dataframe(pd.DataFrame(st.session_state.transactions), use_container_width=True)
-        excel_file = build_master_excel(st.session_state.transactions)
+        excel_bytes = build_master_excel(st.session_state.transactions).getvalue()
+        folder_name = monthly_folder_name()
+        st.caption(f"Akan disimpan ke folder Drive: **{folder_name}**")
+
         col1, col2 = st.columns(2)
         with col1:
             if st.button("☁️ Simpan ke Google Drive"):
-                fid = save_master(drive_service(creds), excel_file,
-                                  st.session_state.get("master_file_id"))
-                st.session_state.master_file_id = fid
-                st.success("Disimpan ke Google Drive ✅")
+                folder_id = get_or_create_folder(service, folder_name)
+                filename = next_filename(service, folder_id)
+                created = save_master_in_folder(service, excel_bytes, folder_id, filename)
+                st.success(f"Disimpan: {created['name']}\n\n→ folder: {folder_name} ✅")
         with col2:
-            st.download_button("📥 Muat turun (sandaran)", data=excel_file,
-                               file_name=MASTER_FILENAME, mime=XLSX_MIME,
+            dl_name = f"{MASTER_PREFIX}_{pd.Timestamp.now().strftime('%d%m%Y')}.xlsx"
+            st.download_button("📥 Muat turun (sandaran)", data=excel_bytes,
+                               file_name=dl_name, mime=XLSX_MIME,
                                use_container_width=True)
     else:
         st.info("Belum ada transaksi. Muat fail induk atau upload resit di atas.")
