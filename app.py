@@ -312,6 +312,64 @@ def save_master_in_folder(service, excel_bytes, folder_id, filename):
     return created
 
 
+# ---- Arkib dokumen sumber (folder "Resit Softcopy YYYY") ----
+def softcopy_folder_name():
+    """Folder arkib tahunan untuk dokumen sumber, cth: 'Resit Softcopy 2026'."""
+    return f"Resit Softcopy {pd.Timestamp.now().year}"
+
+
+def count_archive_today(service, folder_id):
+    """Bilangan fail arkib untuk tarikh hari ini (untuk nombor turutan)."""
+    datestr = pd.Timestamp.now().strftime("%d%m%Y")
+    q = f"name contains 'resit_{datestr}' and '{folder_id}' in parents and trashed=false"
+    res = service.files().list(q=q, spaces="drive", fields="files(id)").execute()
+    return len(res.get("files", []))
+
+
+def save_archive_file(service, data_bytes, folder_id, seq, ext, mimetype):
+    """Simpan satu dokumen sumber: resit_DDMMYYYY(seq).ext"""
+    datestr = pd.Timestamp.now().strftime("%d%m%Y")
+    filename = f"resit_{datestr}({seq}).{ext}"
+    media = MediaIoBaseUpload(BytesIO(data_bytes), mimetype=mimetype, resumable=True)
+    meta = {"name": filename, "parents": [folder_id]}
+    service.files().create(body=meta, media_body=media, fields="id").execute()
+    return filename
+
+
+def make_voucher_image(txn):
+    """Jana imej baucar PNG untuk transaksi manual (tiada resit fizikal)."""
+    from PIL import ImageDraw, ImageFont
+    W, H = 620, 380
+    img = Image.new("RGB", (W, H), "white")
+    d = ImageDraw.Draw(img)
+    try:
+        fb = ImageFont.truetype("DejaVuSans-Bold.ttf", 22)
+        ff = ImageFont.truetype("DejaVuSans.ttf", 17)
+    except Exception:
+        fb = ImageFont.load_default()
+        ff = ImageFont.load_default()
+    d.rectangle([0, 0, W, 62], fill=(20, 48, 92))
+    d.text((22, 19), "BAUCAR TRANSAKSI MANUAL", fill="white", font=fb)
+    rows = [
+        ("Tarikh", txn.get("transaction_date", "")),
+        ("Vendor / Tempat", txn.get("vendor_name", "")),
+        ("Keterangan", txn.get("description", "")),
+        ("Jumlah (RM)", f"{float(txn.get('amount', 0) or 0):.2f}"),
+        ("Akaun Debit", txn.get("debit_account", "")),
+        ("Akaun Kredit", txn.get("credit_account", "")),
+    ]
+    y = 90
+    for label, val in rows:
+        d.text((22, y), f"{label}:", fill=(91, 107, 133), font=ff)
+        d.text((210, y), str(val)[:48], fill=(27, 38, 56), font=ff)
+        y += 40
+    d.text((22, H - 32), "Transaksi tanpa resit fizikal — direkod secara manual",
+           fill=(154, 166, 188), font=ff)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 # ==================================================
 # ANTARA MUKA STREAMLIT
 # ==================================================
@@ -509,19 +567,27 @@ with st.container(border=True):
     if receipts and st.button("🔍 Analisa Semua Resit"):
         progress = st.progress(0)
         added, exact, pending = 0, 0, []
+        arc_folder = get_or_create_folder(service, softcopy_folder_name())
+        seq = count_archive_today(service, arc_folder)
         for i, file in enumerate(receipts):
             try:
-                data = extract_receipt_data(Image.open(file))
+                raw = file.getvalue()
+                ext = (file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg").lower()
+                mime = file.type or "image/jpeg"
+                data = extract_receipt_data(Image.open(BytesIO(raw)))
                 status = classify(data, st.session_state.transactions)
                 if status == "new":
                     st.session_state.transactions.append(data)
                     added += 1
+                    seq += 1
+                    save_archive_file(service, raw, arc_folder, seq, ext, mime)
                     st.write(f"✅ {file.name} — {data.get('vendor_name','?')} (RM{data.get('amount','?')})")
                 elif status == "exact":
                     exact += 1
                     st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
                 else:
-                    pending.append({"data": data, "name": file.name})
+                    pending.append({"data": data, "name": file.name,
+                                    "bytes": raw, "ext": ext, "mime": mime})
             except Exception as e:
                 st.error(f"❌ {file.name}: {e}")
             progress.progress((i + 1) / len(receipts))
@@ -572,6 +638,10 @@ with st.container(border=True):
                 "currency": "MYR",
             }
             st.session_state.transactions.append(txn)
+            # Arkib baucar ke folder Resit Softcopy
+            arc_folder = get_or_create_folder(service, softcopy_folder_name())
+            seq = count_archive_today(service, arc_folder) + 1
+            save_archive_file(service, make_voucher_image(txn), arc_folder, seq, "png", "image/png")
             st.success(f"Ditambah: {txn['vendor_name']} — RM{txn['amount']:.2f} ({debit})")
             st.rerun()
 
@@ -590,9 +660,14 @@ if st.session_state.pending:
             )
         if st.button("✅ Sahkan pilihan"):
             kept = 0
+            arc_folder = get_or_create_folder(service, softcopy_folder_name())
+            seq = count_archive_today(service, arc_folder)
             for idx, item in enumerate(st.session_state.pending):
                 if st.session_state.get(f"keep_{idx}"):
                     st.session_state.transactions.append(item["data"])
+                    seq += 1
+                    save_archive_file(service, item["bytes"], arc_folder, seq,
+                                      item.get("ext", "jpg"), item.get("mime", "image/jpeg"))
                     kept += 1
             st.session_state.pending = []
             st.success(f"{kept} transaksi ditambah sebagai pembelian berasingan.")
