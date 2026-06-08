@@ -46,6 +46,7 @@ AUTHOR_EMAIL = "sulaimanosman03@gmail.com"
 AUTHOR_YEAR = "2026"
 
 MASTER_PREFIX = "fail_induk_perakaunan"
+AUTOBACKUP_NAME = "fail_induk_perakaunan_AUTOBACKUP.xlsx"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
@@ -253,15 +254,28 @@ def drive_service(creds):
     return build("drive", "v3", credentials=creds)
 
 
-def find_latest_master(service):
-    """Cari fail induk TERKINI yang app pernah cipta (untuk sambung kerja)."""
-    q = "name contains 'fail_induk_perakaunan' and trashed=false"
+def _list_in_folder(service, folder_id):
+    """Senarai semua fail dalam folder (untuk tapis dalam Python)."""
     res = service.files().list(
-        q=q, spaces="drive", orderBy="createdTime desc",
-        fields="files(id,name)",
+        q=f"'{folder_id}' in parents and trashed=false",
+        spaces="drive", fields="files(id,name)", pageSize=1000,
     ).execute()
-    files = res.get("files", [])
-    return files[0] if files else None
+    return res.get("files", [])
+
+
+def find_latest_master(service):
+    """Cari fail induk TERKINI (ikut masa ubah suai). Tapis dalam Python
+    untuk elak isu 'name contains' Drive dengan nama berunderscore."""
+    res = service.files().list(
+        q=("mimeType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' "
+           "and trashed=false"),
+        spaces="drive", orderBy="modifiedTime desc",
+        fields="files(id,name,modifiedTime)", pageSize=100,
+    ).execute()
+    for f in res.get("files", []):
+        if f["name"].startswith("fail_induk_perakaunan"):
+            return f
+    return None
 
 
 def download_master(service, file_id):
@@ -298,9 +312,7 @@ def next_filename(service, folder_id):
     """Jana nama fail bertarikh + nombor, cth: fail_induk_perakaunan_08062026(01).xlsx"""
     datestr = pd.Timestamp.now().strftime("%d%m%Y")
     base = f"fail_induk_perakaunan_{datestr}"
-    q = f"name contains '{base}' and '{folder_id}' in parents and trashed=false"
-    res = service.files().list(q=q, spaces="drive", fields="files(id,name)").execute()
-    count = len(res.get("files", []))
+    count = sum(1 for f in _list_in_folder(service, folder_id) if f["name"].startswith(base))
     return f"{base}({count + 1:02d}).xlsx"
 
 
@@ -312,6 +324,29 @@ def save_master_in_folder(service, excel_bytes, folder_id, filename):
     return created
 
 
+def auto_backup(service, excel_bytes):
+    """Backup BERGULIR: kemas kini SATU fail backup (tak cipta banyak salinan)."""
+    folder_id = get_or_create_folder(service, monthly_folder_name())
+    q = f"name='{AUTOBACKUP_NAME}' and '{folder_id}' in parents and trashed=false"
+    res = service.files().list(q=q, spaces="drive", fields="files(id)").execute()
+    files = res.get("files", [])
+    media = MediaIoBaseUpload(BytesIO(excel_bytes), mimetype=XLSX_MIME, resumable=True)
+    if files:
+        service.files().update(fileId=files[0]["id"], media_body=media).execute()
+    else:
+        meta = {"name": AUTOBACKUP_NAME, "mimeType": XLSX_MIME, "parents": [folder_id]}
+        service.files().create(body=meta, media_body=media, fields="id").execute()
+
+
+def maybe_autobackup(service):
+    """Jalankan auto-backup jika diaktifkan. Senyap jika gagal (tak ganggu aliran)."""
+    if st.session_state.get("auto_backup") and st.session_state.get("transactions"):
+        try:
+            auto_backup(service, build_master_excel(st.session_state.transactions).getvalue())
+        except Exception:
+            pass
+
+
 # ---- Arkib dokumen sumber (folder "Resit Softcopy YYYY") ----
 def softcopy_folder_name():
     """Folder arkib tahunan untuk dokumen sumber, cth: 'Resit Softcopy 2026'."""
@@ -321,9 +356,8 @@ def softcopy_folder_name():
 def count_archive_today(service, folder_id):
     """Bilangan fail arkib untuk tarikh hari ini (untuk nombor turutan)."""
     datestr = pd.Timestamp.now().strftime("%d%m%Y")
-    q = f"name contains 'resit_{datestr}' and '{folder_id}' in parents and trashed=false"
-    res = service.files().list(q=q, spaces="drive", fields="files(id)").execute()
-    return len(res.get("files", []))
+    base = f"resit_{datestr}"
+    return sum(1 for f in _list_in_folder(service, folder_id) if f["name"].startswith(base))
 
 
 def save_archive_file(service, data_bytes, folder_id, seq, ext, mimetype):
@@ -536,6 +570,13 @@ m1.metric("Jumlah Transaksi", f"{len(txns)}")
 m2.metric("Jumlah Perbelanjaan", f"RM {total_amount:,.2f}")
 m3.metric(f"Bulan {this_month}", f"RM {month_amount:,.2f}")
 
+# Auto-backup: simpan automatik ke Drive setiap kali ada entri baru
+st.session_state.auto_backup = st.toggle(
+    "🔄 Auto-backup ke Drive selepas setiap entri baru",
+    value=st.session_state.get("auto_backup", False),
+    help="Bila aktif, data disimpan automatik ke fail backup bergulir di Drive — elak kehilangan data.",
+)
+
 st.write("")
 
 # ==================================================
@@ -543,18 +584,22 @@ st.write("")
 # ==================================================
 with st.container(border=True):
     section("1", "Sambung Fail Induk")
-    st.caption("Muat fail induk TERKINI dari Google Drive (pilihan — langkau jika kali pertama).")
+    st.caption("Klik di awal hari untuk sambung rekod semalam. Memuat fail induk TERKINI dari Drive.")
     if st.button("📂 Muat fail induk terkini dari Drive"):
-        latest = find_latest_master(service)
-        if latest:
-            st.session_state.transactions = read_master_bytes(
-                download_master(service, latest["id"]))
-            st.success(
-                f"{len(st.session_state.transactions)} transaksi dimuatkan dari: "
-                f"{latest['name']}")
-            st.rerun()
-        else:
-            st.info("Tiada fail induk lagi — akan dicipta automatik bila anda simpan.")
+        with st.spinner("Mencari fail induk terkini di Drive..."):
+            try:
+                latest = find_latest_master(service)
+                if latest:
+                    st.session_state.transactions = read_master_bytes(
+                        download_master(service, latest["id"]))
+                    st.success(
+                        f"{len(st.session_state.transactions)} transaksi dimuatkan dari: "
+                        f"{latest['name']}")
+                    st.rerun()
+                else:
+                    st.info("Tiada fail induk dijumpai di Drive. Akan dicipta bila anda simpan kali pertama.")
+            except Exception as e:
+                st.error(f"Gagal memuat fail induk: {e}")
 
 # ==================================================
 # SEKSYEN 2: UPLOAD RESIT
@@ -593,6 +638,8 @@ with st.container(border=True):
             progress.progress((i + 1) / len(receipts))
         st.session_state.pending = pending
         st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
+        if added:
+            maybe_autobackup(service)
 
 # ==================================================
 # SEKSYEN 3: TAMBAH TRANSAKSI MANUAL (TANPA RESIT)
@@ -642,6 +689,7 @@ with st.container(border=True):
             arc_folder = get_or_create_folder(service, softcopy_folder_name())
             seq = count_archive_today(service, arc_folder) + 1
             save_archive_file(service, make_voucher_image(txn), arc_folder, seq, "png", "image/png")
+            maybe_autobackup(service)
             st.success(f"Ditambah: {txn['vendor_name']} — RM{txn['amount']:.2f} ({debit})")
             st.rerun()
 
@@ -671,6 +719,8 @@ if st.session_state.pending:
                     kept += 1
             st.session_state.pending = []
             st.success(f"{kept} transaksi ditambah sebagai pembelian berasingan.")
+            if kept:
+                maybe_autobackup(service)
             st.rerun()
 
 # ==================================================
