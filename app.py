@@ -265,14 +265,113 @@ def save_master(service, excel_bytes, file_id=None):
 # ==================================================
 # ANTARA MUKA STREAMLIT
 # ==================================================
-st.set_page_config(page_title="Resit Analisa", page_icon="🧾")
-st.title("🧾 Resit Analisa → Fail Induk (Google Drive)")
+st.set_page_config(page_title="Resit Analisa", page_icon="🧾", layout="centered")
 
+# ==================================================
+# GAYA / TEMA (CSS tersuai — rupa fintech profesional)
+# ==================================================
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+
+:root{
+  --navy:#14305C; --navy2:#1E4A86; --accent:#2F8FBF;
+  --ink:#1B2638; --muted:#5B6B85; --line:#E4E9F2;
+  --bg:#EEF2F9; --card:#FFFFFF;
+}
+.stApp{ background:
+  radial-gradient(900px 500px at 100% -10%, #E3ECFa 0%, transparent 55%),
+  linear-gradient(180deg,#EEF2F9 0%,#F6F8FC 100%); }
+html, body, [class*="css"]{ font-family:'IBM Plex Sans',sans-serif; color:var(--ink); }
+h1,h2,h3,h4{ font-family:'Sora',sans-serif !important; color:var(--navy) !important; letter-spacing:-.01em; }
+
+#MainMenu, footer, [data-testid="stHeader"]{ visibility:hidden; }
+.block-container{ padding-top:1.4rem; max-width:780px; }
+
+/* Hero */
+.hero{ background:linear-gradient(120deg,var(--navy) 0%,var(--navy2) 70%,var(--accent) 130%);
+  border-radius:20px; padding:26px 30px; color:#fff; display:flex; align-items:center; gap:18px;
+  box-shadow:0 14px 34px rgba(20,48,92,.28); margin-bottom:22px; }
+.hero .mark{ font-size:34px; background:rgba(255,255,255,.14); width:62px; height:62px;
+  display:flex; align-items:center; justify-content:center; border-radius:16px; }
+.hero h1{ color:#fff !important; margin:0; font-size:27px; }
+.hero p{ margin:3px 0 0; color:#D7E3F7; font-size:13.5px; }
+
+/* Section header */
+.sect{ display:flex; align-items:center; gap:11px; margin:6px 0 12px; }
+.sect .badge{ background:var(--navy); color:#fff; width:28px; height:28px; border-radius:9px;
+  display:flex; align-items:center; justify-content:center; font-family:'Sora'; font-weight:700; font-size:14px; }
+.sect .t{ font-family:'Sora'; font-weight:600; font-size:18px; color:var(--navy); }
+
+/* Kad seksyen */
+[data-testid="stVerticalBlockBorderWrapper"]{ background:var(--card); border:1px solid var(--line) !important;
+  border-radius:16px; box-shadow:0 4px 18px rgba(20,48,92,.06); }
+
+/* Butang */
+.stButton>button, .stDownloadButton>button{
+  background:var(--navy); color:#fff; border:0; border-radius:11px; padding:.55rem 1.1rem;
+  font-family:'Sora'; font-weight:600; font-size:14px; transition:.18s; box-shadow:0 4px 12px rgba(20,48,92,.18); }
+.stButton>button:hover, .stDownloadButton>button:hover{ background:var(--navy2); transform:translateY(-1px);
+  box-shadow:0 7px 18px rgba(20,48,92,.26); color:#fff; }
+.stLinkButton>a{ background:linear-gradient(120deg,var(--navy),var(--navy2)); color:#fff !important;
+  border-radius:11px; padding:.7rem 1.4rem; font-family:'Sora'; font-weight:600; text-decoration:none;
+  box-shadow:0 6px 16px rgba(20,48,92,.22); transition:.18s; }
+.stLinkButton>a:hover{ transform:translateY(-1px); box-shadow:0 9px 22px rgba(20,48,92,.3); }
+
+/* Metrik */
+[data-testid="stMetric"]{ background:var(--card); border:1px solid var(--line); border-radius:14px;
+  padding:14px 16px; box-shadow:0 3px 12px rgba(20,48,92,.05); }
+[data-testid="stMetricLabel"]{ color:var(--muted); font-weight:600; }
+[data-testid="stMetricValue"]{ color:var(--navy); font-family:'Sora'; }
+
+/* Status pill */
+.pill{ display:inline-flex; align-items:center; gap:8px; background:#E8F5EE; color:#1B7A46;
+  border:1px solid #BCE3CC; border-radius:999px; padding:6px 14px; font-size:13px; font-weight:600; }
+.pill .dot{ width:9px; height:9px; border-radius:50%; background:#22A35A; box-shadow:0 0 0 3px rgba(34,163,90,.18); }
+
+/* Uploader & dataframe */
+[data-testid="stFileUploader"]{ background:#F7F9FD; border:1.5px dashed #C5D2E8; border-radius:14px; padding:8px; }
+[data-testid="stDataFrame"]{ border-radius:12px; overflow:hidden; border:1px solid var(--line); }
+
+/* Footer tersuai */
+.foot{ text-align:center; color:var(--muted); font-size:12.5px; margin-top:26px;
+  padding-top:16px; border-top:1px solid var(--line); }
+.foot a{ color:var(--accent); text-decoration:none; font-weight:600; }
+</style>
+""", unsafe_allow_html=True)
+
+
+def section(num, title):
+    st.markdown(
+        f'<div class="sect"><div class="badge">{num}</div><div class="t">{title}</div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def hero():
+    st.markdown(
+        '<div class="hero"><div class="mark">🧾</div>'
+        '<div><h1>Resit Analisa</h1>'
+        '<p>Automasi Perakaunan Berkuasa AI · Resit → Excel → Google Drive</p></div></div>',
+        unsafe_allow_html=True,
+    )
+
+
+def footer():
+    st.markdown(
+        f'<div class="foot">Dibangunkan oleh <b>{AUTHOR_NAME}</b> · '
+        f'<a href="mailto:{AUTHOR_EMAIL}">{AUTHOR_EMAIL}</a></div>',
+        unsafe_allow_html=True,
+    )
+
+
+# ==================================================
+# STATE + OAUTH REDIRECT
+# ==================================================
 for key, default in [("transactions", []), ("pending", []), ("master_file_id", None)]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-# ---- Tangani redirect balik dari Google ----
 params = st.query_params
 if "code" in params and "credentials" not in st.session_state:
     try:
@@ -285,95 +384,142 @@ if "code" in params and "credentials" not in st.session_state:
         st.error(f"Gagal log masuk: {e}")
 
 creds = st.session_state.get("credentials")
+hero()
 
-# ---- Seksyen 1: sambung Google Drive ----
-st.subheader("1️⃣ Google Drive")
+# ==================================================
+# PINTU MASUK (log masuk wajib)
+# ==================================================
 if not creds:
-    flow = get_flow()
-    auth_url, _ = flow.authorization_url(
-        prompt="consent", access_type="offline", include_granted_scopes="true"
-    )
-    st.link_button("🔐 Log masuk Google Drive", auth_url)
-    st.info("Log masuk sekali untuk baca/simpan fail induk terus dari Drive anda.")
-else:
-    st.success("✅ Tersambung ke Google Drive")
-    service = drive_service(creds)
+    with st.container(border=True):
+        st.markdown("#### 🔐 Log masuk diperlukan")
+        st.write("Sila log masuk dengan akaun Google anda untuk mula menggunakan aplikasi. "
+                 "Hanya pengguna yang dibenarkan boleh mengakses.")
+        flow = get_flow()
+        auth_url, _ = flow.authorization_url(
+            prompt="consent", access_type="offline", include_granted_scopes="true"
+        )
+        st.link_button("Log masuk dengan Google", auth_url)
+    footer()
+    st.stop()
+
+# ==================================================
+# BAR STATUS + PAPAN PEMUKA METRIK
+# ==================================================
+service = drive_service(creds)
+txns = st.session_state.transactions
+total_amount = sum(float(t.get("amount", 0) or 0) for t in txns)
+this_month = pd.Timestamp.now().strftime("%Y-%m")
+month_amount = sum(
+    float(t.get("amount", 0) or 0) for t in txns
+    if str(t.get("transaction_date", "")).startswith(this_month)
+)
+
+c1, c2 = st.columns([3, 1])
+with c1:
+    st.markdown('<span class="pill"><span class="dot"></span>Tersambung ke Google Drive</span>',
+                unsafe_allow_html=True)
+with c2:
+    if st.button("Log keluar"):
+        st.session_state.clear()
+        st.rerun()
+
+m1, m2, m3 = st.columns(3)
+m1.metric("Jumlah Transaksi", f"{len(txns)}")
+m2.metric("Jumlah Perbelanjaan", f"RM {total_amount:,.2f}")
+m3.metric(f"Bulan {this_month}", f"RM {month_amount:,.2f}")
+
+st.write("")
+
+# ==================================================
+# SEKSYEN 1: MUAT FAIL INDUK
+# ==================================================
+with st.container(border=True):
+    section("1", "Sambung Fail Induk")
+    st.caption("Muat rekod sedia ada dari Google Drive (pilihan — langkau jika kali pertama).")
     if st.button("📂 Muat fail induk dari Drive"):
         fid = find_master(service)
         if fid:
             st.session_state.master_file_id = fid
             st.session_state.transactions = read_master_bytes(download_master(service, fid))
-            st.success(f"{len(st.session_state.transactions)} transaksi dimuatkan dari Drive.")
+            st.success(f"{len(st.session_state.transactions)} transaksi dimuatkan.")
+            st.rerun()
         else:
             st.session_state.master_file_id = None
             st.info("Tiada fail induk lagi — akan dicipta automatik bila anda simpan.")
 
-# ---- Seksyen 2: upload resit ----
-st.subheader("2️⃣ Upload resit baru (boleh banyak sekali gus)")
-receipts = st.file_uploader("Pilih gambar resit", type=["jpg", "jpeg", "png"],
-                            accept_multiple_files=True)
+# ==================================================
+# SEKSYEN 2: UPLOAD RESIT
+# ==================================================
+with st.container(border=True):
+    section("2", "Upload Resit Baru")
+    st.caption("Boleh upload banyak gambar sekali gus. AI akan baca setiap satu.")
+    receipts = st.file_uploader("Pilih gambar resit", type=["jpg", "jpeg", "png"],
+                                accept_multiple_files=True, label_visibility="collapsed")
+    if receipts and st.button("🔍 Analisa Semua Resit"):
+        progress = st.progress(0)
+        added, exact, pending = 0, 0, []
+        for i, file in enumerate(receipts):
+            try:
+                data = extract_receipt_data(Image.open(file))
+                status = classify(data, st.session_state.transactions)
+                if status == "new":
+                    st.session_state.transactions.append(data)
+                    added += 1
+                    st.write(f"✅ {file.name} — {data.get('vendor_name','?')} (RM{data.get('amount','?')})")
+                elif status == "exact":
+                    exact += 1
+                    st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
+                else:
+                    pending.append({"data": data, "name": file.name})
+            except Exception as e:
+                st.error(f"❌ {file.name}: {e}")
+            progress.progress((i + 1) / len(receipts))
+        st.session_state.pending = pending
+        st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
 
-if receipts and st.button("🔍 Analisa Semua Resit"):
-    progress = st.progress(0)
-    added, exact, pending = 0, 0, []
-    for i, file in enumerate(receipts):
-        try:
-            data = extract_receipt_data(Image.open(file))
-            status = classify(data, st.session_state.transactions)
-            if status == "new":
-                st.session_state.transactions.append(data)
-                added += 1
-                st.write(f"✅ {file.name} — {data.get('vendor_name','?')} (RM{data.get('amount','?')})")
-            elif status == "exact":
-                exact += 1
-                st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
-            else:
-                pending.append({"data": data, "name": file.name})
-        except Exception as e:
-            st.error(f"❌ {file.name}: {e}")
-        progress.progress((i + 1) / len(receipts))
-    st.session_state.pending = pending
-    st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
-
-# ---- Semakan manusia ----
+# ==================================================
+# SEMAKAN MANUSIA
+# ==================================================
 if st.session_state.pending:
-    st.subheader("🔎 Perlu disahkan — serupa, tiada nombor resit")
-    st.write("Tanda yang **BUKAN pendua**:")
-    for idx, item in enumerate(st.session_state.pending):
-        d = item["data"]
-        st.checkbox(
-            f"{item['name']} — {d.get('vendor_name','?')} · RM{d.get('amount','?')} · {d.get('transaction_date','?')}",
-            key=f"keep_{idx}",
-        )
-    if st.button("✅ Sahkan pilihan"):
-        kept = 0
+    with st.container(border=True):
+        section("!", "Perlu Disahkan")
+        st.caption("Transaksi ini serupa & tiada nombor resit. Tanda yang BUKAN pendua.")
         for idx, item in enumerate(st.session_state.pending):
-            if st.session_state.get(f"keep_{idx}"):
-                st.session_state.transactions.append(item["data"])
-                kept += 1
-        st.session_state.pending = []
-        st.success(f"{kept} transaksi ditambah sebagai pembelian berasingan.")
-        st.rerun()
+            d = item["data"]
+            st.checkbox(
+                f"{item['name']} — {d.get('vendor_name','?')} · RM{d.get('amount','?')} · {d.get('transaction_date','?')}",
+                key=f"keep_{idx}",
+            )
+        if st.button("✅ Sahkan pilihan"):
+            kept = 0
+            for idx, item in enumerate(st.session_state.pending):
+                if st.session_state.get(f"keep_{idx}"):
+                    st.session_state.transactions.append(item["data"])
+                    kept += 1
+            st.session_state.pending = []
+            st.success(f"{kept} transaksi ditambah sebagai pembelian berasingan.")
+            st.rerun()
 
-# ---- Seksyen 3: papar + simpan ----
-st.subheader("3️⃣ Fail induk semasa")
-if st.session_state.transactions:
-    st.dataframe(pd.DataFrame(st.session_state.transactions))
-    excel_file = build_master_excel(st.session_state.transactions)
+# ==================================================
+# SEKSYEN 3: FAIL INDUK & LAPORAN
+# ==================================================
+with st.container(border=True):
+    section("3", "Fail Induk & Laporan")
+    if st.session_state.transactions:
+        st.dataframe(pd.DataFrame(st.session_state.transactions), use_container_width=True)
+        excel_file = build_master_excel(st.session_state.transactions)
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("☁️ Simpan ke Google Drive"):
+                fid = save_master(drive_service(creds), excel_file,
+                                  st.session_state.get("master_file_id"))
+                st.session_state.master_file_id = fid
+                st.success("Disimpan ke Google Drive ✅")
+        with col2:
+            st.download_button("📥 Muat turun (sandaran)", data=excel_file,
+                               file_name=MASTER_FILENAME, mime=XLSX_MIME,
+                               use_container_width=True)
+    else:
+        st.info("Belum ada transaksi. Muat fail induk atau upload resit di atas.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if creds and st.button("☁️ Simpan ke Google Drive"):
-            fid = save_master(drive_service(creds), excel_file,
-                              st.session_state.get("master_file_id"))
-            st.session_state.master_file_id = fid
-            st.success("Disimpan ke Google Drive ✅")
-    with col2:
-        st.download_button("📥 Muat turun (sandaran)", data=excel_file,
-                           file_name=MASTER_FILENAME, mime=XLSX_MIME)
-else:
-    st.info("Belum ada transaksi. Muat fail induk dari Drive atau upload resit.")
-
-# FOOTNOTE
-st.markdown("---")
-st.caption(f"Dibangunkan oleh **{AUTHOR_NAME}** · [{AUTHOR_EMAIL}](mailto:{AUTHOR_EMAIL})")
+footer()
