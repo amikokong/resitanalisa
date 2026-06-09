@@ -617,6 +617,66 @@ def footer():
     )
 
 
+def send_trial_request(name, email):
+    """Hantar permohonan trial ke e-mel pemilik melalui SMTP (jika disediakan dalam Secrets).
+    Pulang True jika berjaya dihantar, False jika SMTP tidak disediakan/gagal."""
+    try:
+        cfg = dict(st.secrets.get("smtp", {}))
+    except Exception:
+        cfg = {}
+    host = cfg.get("host"); user = cfg.get("user"); pw = cfg.get("password")
+    if not (host and user and pw):
+        return False
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        msg = EmailMessage()
+        msg["Subject"] = f"[ETS] Permohonan Free Trial - {name}"
+        msg["From"] = user
+        msg["To"] = cfg.get("to", AUTHOR_EMAIL)
+        msg.set_content(
+            f"Permohonan free trial baharu untuk ETS:\n\n"
+            f"Nama : {name}\nEmel : {email}\n\n"
+            f"Tindakan: tambah emel ini ke Google Test users dan ke Secrets [access] "
+            f"sebagai trial, cth:\n\"{email}\" = \"trial:TARIKH:3\""
+        )
+        with smtplib.SMTP(host, int(cfg.get("port", 587))) as s:
+            s.starttls()
+            s.login(user, pw)
+            s.send_message(msg)
+        return True
+    except Exception:
+        return False
+
+
+def trial_request_form():
+    """Borang tangkap prospek untuk free trial 3 hari."""
+    with st.container(border=True):
+        st.markdown("#### Nak cuba aplikasi ini?")
+        st.write("**Free trial 3 hari secara percuma.** Masukkan nama dan email anda "
+                 "untuk tujuan pengaktifan aplikasi ini.")
+        tn = st.text_input("Nama", key="trial_name")
+        te = st.text_input("Email", key="trial_email")
+        if st.button("Mohon Free Trial"):
+            if not tn.strip() or "@" not in te or "." not in te.split("@")[-1]:
+                st.warning("Sila masukkan nama dan alamat email yang sah.")
+            elif send_trial_request(tn.strip(), te.strip()):
+                st.success(f"Terima kasih, {tn.strip()}! Permohonan anda telah diterima. "
+                           "Kami akan aktifkan akaun anda dalam masa terdekat.")
+            else:
+                import urllib.parse
+                subj = urllib.parse.quote("Permohonan Free Trial ETS")
+                body = urllib.parse.quote(
+                    f"Nama: {tn.strip()}\nEmel: {te.strip()}\n\n"
+                    "Saya ingin mencuba ETS (free trial 3 hari).")
+                mailto = f"mailto:{AUTHOR_EMAIL}?subject={subj}&body={body}"
+                st.success(f"Terima kasih, {tn.strip()}! Satu langkah terakhir:")
+                st.markdown(
+                    f'👉 <a href="{mailto}">Klik di sini untuk hantar permohonan anda</a>',
+                    unsafe_allow_html=True)
+                st.caption(f"Atau e-mel terus ke {AUTHOR_EMAIL} dengan nama & email anda.")
+
+
 # ==================================================
 # STATE + OAUTH REDIRECT
 # ==================================================
@@ -651,6 +711,7 @@ if not creds:
             prompt="consent", access_type="offline", include_granted_scopes="true"
         )
         st.link_button("Log masuk dengan Google", auth_url)
+    trial_request_form()
     footer()
     st.stop()
 
