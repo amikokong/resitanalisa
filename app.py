@@ -300,7 +300,7 @@ def check_access(email):
     Format Secrets:
       [access]
       "user@gmail.com" = "paid"                 -> akses penuh
-      "user@gmail.com" = "trial:2026-06-09:3"   -> trial mula 9 Jun, 3 hari
+      "user@gmail.com" = "trial:2026-06-10:7"   -> trial mula 10 Jun, 7 hari
     """
     try:
         access = dict(st.secrets.get("access", {}))
@@ -651,10 +651,10 @@ def send_trial_request(name, email):
 
 
 def trial_request_form():
-    """Borang tangkap prospek untuk free trial 3 hari."""
+    """Borang tangkap prospek untuk free trial 7 hari."""
     with st.container(border=True):
         st.markdown("#### Nak cuba aplikasi ini?")
-        st.write("**Free trial 3 hari secara percuma.** Masukkan nama dan email anda "
+        st.write("**Free trial 7 hari secara percuma.** Masukkan nama dan email anda "
                  "untuk tujuan pengaktifan aplikasi ini.")
         tn = st.text_input("Nama", key="trial_name")
         te = st.text_input("Email", key="trial_email")
@@ -669,7 +669,7 @@ def trial_request_form():
                 subj = urllib.parse.quote("Permohonan Free Trial ETS")
                 body = urllib.parse.quote(
                     f"Nama: {tn.strip()}\nEmel: {te.strip()}\n\n"
-                    "Saya ingin mencuba ETS (free trial 3 hari).")
+                    "Saya ingin mencuba ETS (free trial 7 hari).")
                 mailto = f"mailto:{AUTHOR_EMAIL}?subject={subj}&body={body}"
                 st.success(f"Terima kasih, {tn.strip()}! Satu langkah terakhir:")
                 st.markdown(
