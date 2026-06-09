@@ -24,7 +24,10 @@ Dibangunkan oleh: Sulaiman Osman  (sulaimanosman03@gmail.com)
 """
 
 import json
+import os
 import time
+
+os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"  # elak ralat 'scope changed' bila tambah skop email
 from io import BytesIO
 
 import streamlit as st
@@ -52,7 +55,11 @@ MASTER_PREFIX = "fail_induk_perakaunan"
 AUTOBACKUP_NAME = "fail_induk_perakaunan_AUTOBACKUP.xlsx"
 PROFILE_FILENAME = "ets_profile.json"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-SCOPES = ["https://www.googleapis.com/auth/drive.file"]
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.file",
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+]
 
 # Nama bulan Bahasa Melayu (untuk folder bulanan)
 BULAN_MY = ["Januari", "Februari", "Mac", "April", "Mei", "Jun",
@@ -270,6 +277,49 @@ def get_flow():
 
 def drive_service(creds):
     return build("drive", "v3", credentials=creds)
+
+
+def get_user_email(creds):
+    """Dapatkan emel pengguna yang log masuk (untuk kawalan akses/trial)."""
+    try:
+        oauth2 = build("oauth2", "v2", credentials=creds)
+        return oauth2.userinfo().get().execute().get("email", "").lower()
+    except Exception:
+        return ""
+
+
+def check_access(email):
+    """
+    Semak akses pengguna ikut senarai dalam Secrets [access].
+    Pulang: (status, hari_tinggal)
+      status: 'full' | 'trial' | 'expired' | 'denied'
+    Format Secrets:
+      [access]
+      "user@gmail.com" = "paid"                 -> akses penuh
+      "user@gmail.com" = "trial:2026-06-09:3"   -> trial mula 9 Jun, 3 hari
+    """
+    try:
+        access = dict(st.secrets.get("access", {}))
+    except Exception:
+        access = {}
+    rule = access.get(email)
+    if not rule:
+        return ("denied", None)
+    rule = str(rule).strip().lower()
+    if rule == "paid":
+        return ("full", None)
+    if rule.startswith("trial:"):
+        try:
+            _, start_s, days_s = rule.split(":")
+            start = pd.Timestamp(start_s).normalize()
+            expiry = start + pd.Timedelta(days=int(days_s))
+            today = pd.Timestamp.now().normalize()
+            if today <= expiry:
+                return ("trial", (expiry - today).days)
+            return ("expired", None)
+        except Exception:
+            return ("denied", None)
+    return ("denied", None)
 
 
 def _list_in_folder(service, folder_id):
@@ -601,6 +651,35 @@ if not creds:
 # BAR STATUS + PAPAN PEMUKA METRIK
 # ==================================================
 service = drive_service(creds)
+
+# ==================================================
+# KAWALAN AKSES / TRIAL (berasaskan emel)
+# ==================================================
+if "user_email" not in st.session_state:
+    st.session_state.user_email = get_user_email(creds)
+user_email = st.session_state.user_email
+access_status, days_left = check_access(user_email)
+
+if access_status == "denied":
+    with st.container(border=True):
+        st.markdown("#### 🔒 Akaun belum didaftarkan")
+        st.write(f"Emel **{user_email or 'anda'}** belum didaftarkan untuk ETS. "
+                 "Sila hubungi kami untuk memulakan percubaan percuma.")
+        st.markdown(f"📧 [{AUTHOR_EMAIL}](mailto:{AUTHOR_EMAIL})")
+    footer()
+    st.stop()
+
+if access_status == "expired":
+    with st.container(border=True):
+        st.markdown("#### ⏰ Tempoh percubaan tamat")
+        st.write("Terima kasih mencuba ETS! Untuk teruskan, sila langgan pelan bulanan atau tahunan.")
+        st.markdown(f"📧 Hubungi untuk langgan: [{AUTHOR_EMAIL}](mailto:{AUTHOR_EMAIL})")
+    footer()
+    st.stop()
+
+if access_status == "trial":
+    st.info(f"🎁 Mod Percubaan — **{days_left} hari** lagi. "
+            "Naik taraf ke pelan bulanan/tahunan untuk akses berterusan.")
 
 # Muat profil pengguna sekali (dari Drive)
 if "profile" not in st.session_state:
