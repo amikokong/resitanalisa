@@ -600,7 +600,9 @@ def hero():
     st.markdown(
         '<div class="hero"><div class="mark">🧾</div>'
         f'<div><h1>{APP_NAME} <span style="font-size:16px;opacity:.8">({APP_SHORT})</span></h1>'
-        '<p>Automasi Perbelanjaan Berkuasa AI · Resit → Excel → Google Drive</p></div></div>',
+        '<p>Resit Renyuk, Pudar atau Tulisan Tangan? Ambil Gambar Sahaja. '
+        'Tak perlu key in satu-satu, AI Akan Memahami, Menyimpan dan '
+        'Merekodkannya Secara Automatik.</p></div></div>',
         unsafe_allow_html=True,
     )
 
