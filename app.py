@@ -51,6 +51,9 @@ AUTHOR_YEAR = "2026"
 APP_NAME = "AI Expenditure Tracking System"
 APP_SHORT = "ETS"
 
+TOS_URL = "https://docs.google.com/document/d/e/2PACX-1vRrOFJo1rzqQEPnANY6QtHNoOb2RYfwiFSJWlIszCEixup6sQV2rMHTBLxCpJyHI8XcYTdeB46XLu7T/pub"
+PRIVACY_URL = "https://docs.google.com/document/d/e/2PACX-1vRzxxLKrCCoHE1PKGnr0W_XZ9aFwA5BGO-n4CweajSmxDsrfxRii7P6N6U8GP0bOrS4TZVjZno8qfdn/pub"
+
 MASTER_PREFIX = "fail_induk_perakaunan"
 AUTOBACKUP_NAME = "fail_induk_perakaunan_AUTOBACKUP.xlsx"
 PROFILE_FILENAME = "ets_profile.json"
@@ -605,7 +608,9 @@ def hero():
 def footer():
     st.markdown(
         f'<div class="foot">\u00A9 {AUTHOR_YEAR} Dibangunkan oleh <b>{AUTHOR_NAME}</b> · '
-        f'<a href="mailto:{AUTHOR_EMAIL}">{AUTHOR_EMAIL}</a></div>',
+        f'<a href="mailto:{AUTHOR_EMAIL}">{AUTHOR_EMAIL}</a><br>'
+        f'<a href="{TOS_URL}" target="_blank">Terma Perkhidmatan</a> · '
+        f'<a href="{PRIVACY_URL}" target="_blank">Dasar Privasi</a></div>',
         unsafe_allow_html=True,
     )
 
