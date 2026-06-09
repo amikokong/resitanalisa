@@ -50,6 +50,7 @@ AUTHOR_YEAR = "2026"
 
 APP_NAME = "AI Expenditure Tracking System"
 APP_SHORT = "ETS"
+DAILY_TRIAL_LIMIT = 30  # had resit/hari untuk pengguna dalam tempoh percubaan
 
 TOS_URL = "https://docs.google.com/document/d/e/2PACX-1vRrOFJo1rzqQEPnANY6QtHNoOb2RYfwiFSJWlIszCEixup6sQV2rMHTBLxCpJyHI8XcYTdeB46XLu7T/pub"
 PRIVACY_URL = "https://docs.google.com/document/d/e/2PACX-1vRzxxLKrCCoHE1PKGnr0W_XZ9aFwA5BGO-n4CweajSmxDsrfxRii7P6N6U8GP0bOrS4TZVjZno8qfdn/pub"
@@ -740,8 +741,22 @@ if access_status == "denied":
 if access_status == "expired":
     with st.container(border=True):
         st.markdown("#### ⏰ Tempoh percubaan tamat")
-        st.write("Terima kasih mencuba ETS! Untuk teruskan, sila langgan pelan bulanan atau tahunan.")
-        st.markdown(f"📧 Hubungi untuk langgan: [{AUTHOR_EMAIL}](mailto:{AUTHOR_EMAIL})")
+        st.write("Terima kasih kerana mencuba ETS! Tempoh percubaan anda telah tamat.")
+        st.success("✅ **Data anda selamat.** Semua rekod kekal dalam Google Drive anda "
+                   "sendiri dan tidak akan hilang. Sebaik anda melanggan, akses penuh "
+                   "diaktifkan semula dengan semua data anda utuh.")
+        st.write("Untuk menyambung, sila langgan pelan berbayar — hubungi Sulaiman:")
+        st.markdown(f"📧 [{AUTHOR_EMAIL}](mailto:{AUTHOR_EMAIL})")
+        # Benarkan muat turun data walaupun tempoh tamat
+        try:
+            latest = find_latest_master(service)
+            if latest:
+                st.download_button(
+                    "⬇️ Muat turun data saya (Excel)",
+                    data=download_master(service, latest["id"]).getvalue(),
+                    file_name=latest["name"], mime=XLSX_MIME)
+        except Exception:
+            pass
     footer()
     st.stop()
 
@@ -834,36 +849,48 @@ with st.container(border=True):
     receipts = st.file_uploader("Pilih gambar resit", type=["jpg", "jpeg", "png"],
                                 accept_multiple_files=True, label_visibility="collapsed")
     if receipts and st.button("🔍 Analisa Semua Resit"):
-        progress = st.progress(0)
-        added, exact, pending = 0, 0, []
         arc_folder = get_or_create_folder(service, softcopy_folder_name())
         seq = count_archive_today(service, arc_folder)
-        for i, file in enumerate(receipts):
-            try:
-                raw = file.getvalue()
-                ext = (file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg").lower()
-                mime = file.type or "image/jpeg"
-                data = extract_receipt_data(Image.open(BytesIO(raw)))
-                status = classify(data, st.session_state.transactions)
-                if status == "new":
-                    st.session_state.transactions.append(data)
-                    added += 1
-                    seq += 1
-                    save_archive_file(service, raw, arc_folder, seq, ext, mime)
-                    st.write(f"✅ {file.name} — {data.get('vendor_name','?')} (RM{data.get('amount','?')})")
-                elif status == "exact":
-                    exact += 1
-                    st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
-                else:
-                    pending.append({"data": data, "name": file.name,
-                                    "bytes": raw, "ext": ext, "mime": mime})
-            except Exception as e:
-                st.error(f"❌ {file.name}: {e}")
-            progress.progress((i + 1) / len(receipts))
-        st.session_state.pending = pending
-        st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
-        if added:
-            maybe_autobackup(service)
+        # Had percubaan: maksimum 30 resit/hari
+        if access_status == "trial":
+            remaining = max(0, DAILY_TRIAL_LIMIT - seq)
+            if remaining <= 0:
+                st.warning(f"Had percubaan dicapai: maksimum {DAILY_TRIAL_LIMIT} resit sehari. "
+                           "Sila cuba semula esok, atau langgan pelan berbayar untuk akses lebih.")
+                receipts = []
+            elif len(receipts) > remaining:
+                st.warning(f"Tempoh percubaan dihadkan {DAILY_TRIAL_LIMIT} resit/hari. "
+                           f"Hanya {remaining} resit pertama akan diproses hari ini.")
+                receipts = receipts[:remaining]
+        if receipts:
+            progress = st.progress(0)
+            added, exact, pending = 0, 0, []
+            for i, file in enumerate(receipts):
+                try:
+                    raw = file.getvalue()
+                    ext = (file.name.rsplit(".", 1)[-1] if "." in file.name else "jpg").lower()
+                    mime = file.type or "image/jpeg"
+                    data = extract_receipt_data(Image.open(BytesIO(raw)))
+                    status = classify(data, st.session_state.transactions)
+                    if status == "new":
+                        st.session_state.transactions.append(data)
+                        added += 1
+                        seq += 1
+                        save_archive_file(service, raw, arc_folder, seq, ext, mime)
+                        st.write(f"✅ {file.name} — {data.get('vendor_name','?')} (RM{data.get('amount','?')})")
+                    elif status == "exact":
+                        exact += 1
+                        st.warning(f"⚠️ {file.name} — pendua tepat (no resit sama). Dilangkau.")
+                    else:
+                        pending.append({"data": data, "name": file.name,
+                                        "bytes": raw, "ext": ext, "mime": mime})
+                except Exception as e:
+                    st.error(f"❌ {file.name}: {e}")
+                progress.progress((i + 1) / len(receipts))
+            st.session_state.pending = pending
+            st.success(f"{added} ditambah · {exact} pendua dilangkau · {len(pending)} perlu disemak.")
+            if added:
+                maybe_autobackup(service)
 
 # ==================================================
 # SEKSYEN 3: TAMBAH TRANSAKSI MANUAL (TANPA RESIT)
