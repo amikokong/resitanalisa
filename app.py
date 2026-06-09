@@ -45,8 +45,12 @@ AUTHOR_NAME = "Sulaiman Osman"
 AUTHOR_EMAIL = "sulaimanosman03@gmail.com"
 AUTHOR_YEAR = "2026"
 
+APP_NAME = "AI Expenditure Tracking System"
+APP_SHORT = "ETS"
+
 MASTER_PREFIX = "fail_induk_perakaunan"
 AUTOBACKUP_NAME = "fail_induk_perakaunan_AUTOBACKUP.xlsx"
+PROFILE_FILENAME = "ets_profile.json"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
 
@@ -63,9 +67,9 @@ FIELDS = [
 # ==================================================
 # HELPER EXCEL
 # ==================================================
-def write_headers(ws, headers):
+def write_headers(ws, headers, row=1):
     for col, title in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col, value=title)
+        cell = ws.cell(row=row, column=col, value=title)
         cell.font = BOLD
         cell.alignment = Alignment(horizontal="center")
 
@@ -174,7 +178,8 @@ def read_master_bytes(buf):
     return out
 
 
-def build_master_excel(transactions):
+def build_master_excel(transactions, profile=None):
+    profile = profile or {}
     wb = Workbook()
     ws1 = wb.active
     ws1.title = "Transactions"
@@ -205,14 +210,27 @@ def build_master_excel(transactions):
         df["transaction_date"] = pd.to_datetime(df["transaction_date"], errors="coerce")
         df["month"] = df["transaction_date"].dt.strftime("%Y-%m")
 
+    # ---- Monthly Summary (dengan header profil) ----
     ws3 = wb.create_sheet("Monthly Summary")
-    write_headers(ws3, ["Month", "Total Expense (RM)", "Bil. Transaksi"])
+    ws3["A1"] = f"{APP_NAME} ({APP_SHORT})"
+    ws3["A1"].font = Font(bold=True, size=14, color="14305C")
+    prow = 2
+    if profile.get("full_name"):
+        ws3.cell(row=prow, column=1, value=f"Nama: {profile['full_name']}").font = BOLD
+        prow += 1
+    if profile.get("company"):
+        ws3.cell(row=prow, column=1, value=f"Syarikat: {profile['company']}").font = BOLD
+        prow += 1
+    ws3.cell(row=prow, column=1,
+             value=f"Laporan dijana: {pd.Timestamp.now().strftime('%d/%m/%Y %H:%M')}")
+    hdr = prow + 2
+    write_headers(ws3, ["Month", "Total Expense (RM)", "Bil. Transaksi"], row=hdr)
     if not df.empty:
         monthly = df.groupby("month").agg(total=("amount", "sum"),
                                           count=("amount", "count")).reset_index()
         for _, r in monthly.iterrows():
             ws3.append([r["month"], float(r["total"]), int(r["count"])])
-    apply_money_format(ws3, ["B"])
+    apply_money_format(ws3, ["B"], start_row=hdr + 1)
     add_footer(ws3)
 
     ws4 = wb.create_sheet("By Account")
@@ -342,9 +360,43 @@ def maybe_autobackup(service):
     """Jalankan auto-backup jika diaktifkan. Senyap jika gagal (tak ganggu aliran)."""
     if st.session_state.get("auto_backup") and st.session_state.get("transactions"):
         try:
-            auto_backup(service, build_master_excel(st.session_state.transactions).getvalue())
+            auto_backup(service, build_master_excel(
+                st.session_state.transactions, st.session_state.get("profile")).getvalue())
         except Exception:
             pass
+
+
+# ---- Profil pengguna (disimpan sebagai JSON di Drive) ----
+def save_profile(service, profile):
+    data = json.dumps(profile).encode("utf-8")
+    media = MediaIoBaseUpload(BytesIO(data), mimetype="application/json", resumable=True)
+    q = f"name='{PROFILE_FILENAME}' and trashed=false"
+    res = service.files().list(q=q, spaces="drive", fields="files(id)").execute()
+    files = res.get("files", [])
+    if files:
+        service.files().update(fileId=files[0]["id"], media_body=media).execute()
+    else:
+        meta = {"name": PROFILE_FILENAME, "mimeType": "application/json"}
+        service.files().create(body=meta, media_body=media, fields="id").execute()
+
+
+def load_profile(service):
+    try:
+        q = f"name='{PROFILE_FILENAME}' and trashed=false"
+        res = service.files().list(q=q, spaces="drive", fields="files(id)").execute()
+        files = res.get("files", [])
+        if not files:
+            return {}
+        req = service.files().get_media(fileId=files[0]["id"])
+        buf = BytesIO()
+        dl = MediaIoBaseDownload(buf, req)
+        done = False
+        while not done:
+            _, done = dl.next_chunk()
+        buf.seek(0)
+        return json.loads(buf.read().decode("utf-8"))
+    except Exception:
+        return {}
 
 
 # ---- Arkib dokumen sumber (folder "Resit Softcopy YYYY") ----
@@ -373,7 +425,7 @@ def save_archive_file(service, data_bytes, folder_id, seq, ext, mimetype):
 def make_voucher_image(txn):
     """Jana imej baucar PNG untuk transaksi manual (tiada resit fizikal)."""
     from PIL import ImageDraw, ImageFont
-    W, H = 620, 380
+    W, H = 620, 420
     img = Image.new("RGB", (W, H), "white")
     d = ImageDraw.Draw(img)
     try:
@@ -385,6 +437,7 @@ def make_voucher_image(txn):
     d.rectangle([0, 0, W, 62], fill=(20, 48, 92))
     d.text((22, 19), "BAUCAR TRANSAKSI MANUAL", fill="white", font=fb)
     rows = [
+        ("No. Siri", txn.get("receipt_no", "")),
         ("Tarikh", txn.get("transaction_date", "")),
         ("Vendor / Tempat", txn.get("vendor_name", "")),
         ("Keterangan", txn.get("description", "")),
@@ -392,7 +445,7 @@ def make_voucher_image(txn):
         ("Akaun Debit", txn.get("debit_account", "")),
         ("Akaun Kredit", txn.get("credit_account", "")),
     ]
-    y = 90
+    y = 88
     for label, val in rows:
         d.text((22, y), f"{label}:", fill=(91, 107, 133), font=ff)
         d.text((210, y), str(val)[:48], fill=(27, 38, 56), font=ff)
@@ -407,7 +460,7 @@ def make_voucher_image(txn):
 # ==================================================
 # ANTARA MUKA STREAMLIT
 # ==================================================
-st.set_page_config(page_title="Resit Analisa", page_icon="🧾", layout="centered")
+st.set_page_config(page_title="ETS — AI Expenditure Tracking", page_icon="🧾", layout="centered")
 
 # ==================================================
 # GAYA / TEMA (CSS tersuai — rupa fintech profesional)
@@ -493,8 +546,8 @@ def section(num, title):
 def hero():
     st.markdown(
         '<div class="hero"><div class="mark">🧾</div>'
-        '<div><h1>Resit Analisa</h1>'
-        '<p>Automasi Perakaunan Berkuasa AI · Resit → Excel → Google Drive</p></div></div>',
+        f'<div><h1>{APP_NAME} <span style="font-size:16px;opacity:.8">({APP_SHORT})</span></h1>'
+        '<p>Automasi Perbelanjaan Berkuasa AI · Resit → Excel → Google Drive</p></div></div>',
         unsafe_allow_html=True,
     )
 
@@ -548,6 +601,12 @@ if not creds:
 # BAR STATUS + PAPAN PEMUKA METRIK
 # ==================================================
 service = drive_service(creds)
+
+# Muat profil pengguna sekali (dari Drive)
+if "profile" not in st.session_state:
+    st.session_state.profile = load_profile(service)
+profile = st.session_state.profile
+
 txns = st.session_state.transactions
 total_amount = sum(float(t.get("amount", 0) or 0) for t in txns)
 this_month = pd.Timestamp.now().strftime("%Y-%m")
@@ -558,11 +617,29 @@ month_amount = sum(
 
 c1, c2 = st.columns([3, 1])
 with c1:
-    st.markdown('<span class="pill"><span class="dot"></span>Tersambung ke Google Drive</span>',
-                unsafe_allow_html=True)
+    who = profile.get("full_name") or "Pengguna"
+    if profile.get("company"):
+        who += f" · {profile['company']}"
+    st.markdown(
+        f'<span class="pill"><span class="dot"></span>{who}</span>',
+        unsafe_allow_html=True)
 with c2:
     if st.button("Log keluar"):
         st.session_state.clear()
+        st.rerun()
+
+# Ruangan Profil (boleh kemas kini)
+with st.expander("👤 Profil Pengguna" + (" — sila isi" if not profile.get("full_name") else "")):
+    pf_name = st.text_input("Nama Penuh", value=profile.get("full_name", ""))
+    pf_company = st.text_input("Nama Syarikat (pilihan)", value=profile.get("company", ""))
+    if st.button("💾 Simpan Profil"):
+        new_profile = {"full_name": pf_name.strip(), "company": pf_company.strip()}
+        st.session_state.profile = new_profile
+        try:
+            save_profile(service, new_profile)
+            st.success("Profil disimpan.")
+        except Exception as e:
+            st.warning(f"Profil disimpan dalam sesi, tetapi gagal simpan ke Drive: {e}")
         st.rerun()
 
 m1, m2, m3 = st.columns(3)
@@ -674,10 +751,11 @@ with st.container(border=True):
             st.error("Sila isi Vendor / Tempat.")
         else:
             debit = m_debit_lain.strip() if (m_debit == "Lain-lain" and m_debit_lain.strip()) else m_debit
+            serial = f"MV-{pd.Timestamp.now().strftime('%Y%m%d-%H%M%S')}"  # no siri unik
             txn = {
                 "transaction_date": str(m_date),
                 "vendor_name": m_vendor.strip(),
-                "receipt_no": "",  # tiada resit (transaksi manual)
+                "receipt_no": serial,  # no siri baucar manual
                 "description": m_desc.strip() or m_vendor.strip(),
                 "amount": float(m_amount),
                 "debit_account": debit,
@@ -690,7 +768,7 @@ with st.container(border=True):
             seq = count_archive_today(service, arc_folder) + 1
             save_archive_file(service, make_voucher_image(txn), arc_folder, seq, "png", "image/png")
             maybe_autobackup(service)
-            st.success(f"Ditambah: {txn['vendor_name']} — RM{txn['amount']:.2f} ({debit})")
+            st.success(f"Ditambah: {txn['vendor_name']} — RM{txn['amount']:.2f} · No. Siri: {serial}")
             st.rerun()
 
 # ==================================================
@@ -730,7 +808,8 @@ with st.container(border=True):
     section("4", "Fail Induk & Laporan")
     if st.session_state.transactions:
         st.dataframe(pd.DataFrame(st.session_state.transactions), use_container_width=True)
-        excel_bytes = build_master_excel(st.session_state.transactions).getvalue()
+        excel_bytes = build_master_excel(
+            st.session_state.transactions, st.session_state.get("profile")).getvalue()
         folder_name = monthly_folder_name()
         st.caption(f"Akan disimpan ke folder Drive: **{folder_name}**")
 
